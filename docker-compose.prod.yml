@@ -1,0 +1,99 @@
+version: "3.9"
+
+# Production stack for a Hetzner VPS.
+#
+# Differences vs. local dev:
+#   - Postgres/Redis/Ollama ports are NOT published to the host - only
+#     reachable from other containers on the internal "ai_internal" network.
+#   - ai-service-api is the ONLY port exposed, and only on 127.0.0.1 so it
+#     sits behind nginx/Caddy for TLS termination (or behind your VPN /
+#     Docker network if NestJS runs on the same host).
+#   - Use a managed Postgres or an external object storage for production
+#     if you prefer - this file assumes self-hosted Postgres for simplicity.
+#
+# GPU note: if you use a Hetzner GPU server (GEX line), uncomment the
+# "deploy.resources.reservations.devices" block under "ollama" and install
+# the NVIDIA Container Toolkit on the host.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks:
+      - ai_internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    volumes:
+      - redis_data:/data
+    networks:
+      - ai_internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: always
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - ai_internal
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  ai-service-api:
+    build: .
+    command: ["node", "dist/index.js"]
+    restart: always
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ai_internal
+    ports:
+      - "127.0.0.1:4000:4000"
+
+  ai-service-worker:
+    build: .
+    command: ["node", "dist/queue/worker.js"]
+    restart: always
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ai_internal
+
+networks:
+  ai_internal:
+    driver: bridge
+
+volumes:
+  pg_data:
+  redis_data:
+  ollama_data:

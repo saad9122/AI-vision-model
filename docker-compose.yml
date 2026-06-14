@@ -1,0 +1,78 @@
+version: "3.9"
+
+# Local development stack:
+#   - postgres: stores DescriptionJob records
+#   - redis: BullMQ queue backend
+#   - ollama: serves qwen2.5vl:3b for vision inference
+#   - ai-service-api: HTTP API (POST/GET /api/v1/jobs)
+#   - ai-service-worker: background worker that does the actual image -> description work
+#
+# Note: image storage (S3 / Hetzner Object Storage) is external - configure
+# the S3_* variables in .env to point at your bucket.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ai_service
+      POSTGRES_PASSWORD: ai_service_password
+      POSTGRES_DB: ai_description_db
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_service"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    # To pull the model the first time, run:
+    #   docker compose exec ollama ollama pull qwen2.5vl:3b
+
+  ai-service-api:
+    build: .
+    command: ["node", "dist/index.js"]
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "4000:4000"
+
+  ai-service-worker:
+    build: .
+    command: ["node", "dist/queue/worker.js"]
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  pg_data:
+  ollama_data:
