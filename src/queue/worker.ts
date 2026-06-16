@@ -6,9 +6,10 @@ import { logger } from "../config/logger";
 import { connection } from "./connection";
 import { QUEUE_NAME } from "./queue";
 import { downloadImage } from "../services/s3.service";
-import { prepareImageForModel } from "../services/image.service";
-import { generateDescription } from "../services/ollama.service";
-import { buildGeneralPrompt, buildIssuesPrompt } from "../services/prompt.service";
+import { prepareImageForModel, getAdaptiveMaxDimension, getAdaptiveJpegQuality } from "../services/image.service";
+import { generateDescription, getActiveVisionProviderLabel } from "../services/vision.service";
+import { buildPrompts, isRoomOverviewItem } from "../services/prompt.service";
+import { generateRoomOverviewGeneral } from "../services/room-overview.service";
 import type { DescriptionJobQueuePayload, DescriptionResult } from "../types";
 
 async function processJob(job: Job<DescriptionJobQueuePayload>) {
@@ -24,29 +25,51 @@ async function processJob(job: Job<DescriptionJobQueuePayload>) {
     data: { status: "PROCESSING" },
   });
 
+  const itemScope = isRoomOverviewItem(record.itemName) ? "ROOM_OVERVIEW" : "ITEM";
+
   logger.info(
-    { jobId, roomName: record.roomName, itemName: record.itemName, images: record.imageKeys.length },
+    {
+      jobId,
+      roomName: record.roomName,
+      itemName: record.itemName,
+      itemScope,
+      images: record.imageKeys.length,
+    },
     "Processing description job"
+  );
+
+  const imageCount = record.imageKeys.length;
+  const maxDimension = getAdaptiveMaxDimension(imageCount);
+  const jpegQuality = getAdaptiveJpegQuality(imageCount);
+
+  logger.info(
+    { jobId, imageCount, maxDimension, jpegQuality },
+    "Preparing images for vision model"
   );
 
   // 1. Download every image for this item and convert it to a base64 JPEG
   const images: string[] = [];
   for (const key of record.imageKeys) {
     const buffer = await downloadImage(key);
-    images.push(await prepareImageForModel(buffer));
+    images.push(await prepareImageForModel(buffer, { maxDimension, quality: jpegQuality }));
   }
 
   const result: DescriptionResult = {};
 
-  // 2. Generate the plain description
+  // General Overview: multi-item flow (identify items across images, describe each, combine).
+  // All other jobs: itemName defines the single item; roomName is location context only.
   if (record.descriptionTypes.includes("GENERAL")) {
-    const prompt = buildGeneralPrompt(record.roomName, record.itemName, images.length);
-    result.general = await generateDescription(prompt, images);
+    if (itemScope === "ROOM_OVERVIEW") {
+      result.general = await generateRoomOverviewGeneral(record.roomName, images);
+    } else {
+      const prompt = buildPrompts(record.roomName, record.itemName, images.length).general;
+      result.general = await generateDescription(prompt, images);
+    }
   }
 
-  // 3. Generate the issue / defect report
+  // Issues: room overview scans all items; single-item jobs focus on itemName only.
   if (record.descriptionTypes.includes("ISSUES")) {
-    const prompt = buildIssuesPrompt(record.roomName, record.itemName, images.length);
+    const prompt = buildPrompts(record.roomName, record.itemName, images.length).issues;
     result.issues = await generateDescription(prompt, images);
   }
 
@@ -80,7 +103,10 @@ worker.on("failed", async (job, err) => {
 });
 
 worker.on("ready", () => {
-  logger.info("Description worker is ready and listening for jobs");
+  logger.info(
+    { visionProvider: getActiveVisionProviderLabel() },
+    "Description worker is ready and listening for jobs"
+  );
 });
 
 process.on("SIGTERM", async () => {

@@ -7,8 +7,8 @@ export const QUEUE_NAME = "description-jobs";
 export const descriptionQueue = new Queue<DescriptionJobQueuePayload>(QUEUE_NAME, {
   connection,
   defaultJobOptions: {
-    attempts: 2,
-    backoff: { type: "exponential", delay: 5000 },
+    attempts: 4,
+    backoff: { type: "exponential", delay: 30000 },
     removeOnComplete: { count: 500 },
     removeOnFail: { count: 1000 },
   },
