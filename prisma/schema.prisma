@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 enum JobStatus {
@@ -12,6 +13,11 @@ enum JobStatus {
   PROCESSING
   COMPLETED
   FAILED
+}
+
+enum DescriptionType {
+  GENERAL
+  ISSUES
 }
 
 // A single request to describe a room item, possibly using multiple images.
@@ -29,7 +35,7 @@ model DescriptionJob {
   imageKeys        String[]
 
   // Which description(s) to generate for this job
-  descriptionTypes String[]
+  descriptionTypes DescriptionType[]
 
   status           JobStatus @default(PENDING)
 

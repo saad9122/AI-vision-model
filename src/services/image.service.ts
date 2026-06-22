@@ -1,10 +1,21 @@
 import sharp from "sharp";
 import { env } from "../config/env";
 
-/** Estimated vision tokens per image at MAX_IMAGE_DIMENSION for Ollama VL models */
-const OLLAMA_TOKENS_PER_IMAGE_AT_BASE = 420;
+/** Estimated vision tokens per image at MAX_IMAGE_DIMENSION for local VL models */
+const LOCAL_VL_TOKENS_PER_IMAGE_AT_BASE = 420;
 /** Reserve tokens for long inventory prompts */
-const OLLAMA_PROMPT_TOKEN_RESERVE = 1500;
+const LOCAL_VL_PROMPT_TOKEN_RESERVE = 1500;
+
+function getLocalVisionContextSize(): number | null {
+  switch (env.VISION_PROVIDER) {
+    case "lmstudio":
+      return env.LMSTUDIO_NUM_CTX;
+    case "ollama":
+      return env.OLLAMA_NUM_CTX;
+    default:
+      return null;
+  }
+}
 
 export interface PrepareImageOptions {
   maxDimension?: number;
@@ -12,25 +23,26 @@ export interface PrepareImageOptions {
 }
 
 /**
- * Computes a smaller max dimension when many images are sent to Ollama so the
- * total prompt stays within OLLAMA_NUM_CTX. Other providers use MAX_IMAGE_DIMENSION.
+ * Computes a smaller max dimension when many images are sent to a local VL
+ * provider so the total prompt stays within its context window. Other
+ * providers use MAX_IMAGE_DIMENSION.
  */
 export function getAdaptiveMaxDimension(imageCount: number): number {
   const base = env.MAX_IMAGE_DIMENSION;
+  const ctx = getLocalVisionContextSize();
 
-  if (env.VISION_PROVIDER !== "ollama" || imageCount <= 1) {
+  if (!ctx || imageCount <= 1) {
     return base;
   }
 
-  const ctx = env.OLLAMA_NUM_CTX;
-  const availableForImages = ctx * 0.75 - OLLAMA_PROMPT_TOKEN_RESERVE;
+  const availableForImages = ctx * 0.75 - LOCAL_VL_PROMPT_TOKEN_RESERVE;
   const tokensPerImage = availableForImages / imageCount;
 
-  if (tokensPerImage >= OLLAMA_TOKENS_PER_IMAGE_AT_BASE) {
+  if (tokensPerImage >= LOCAL_VL_TOKENS_PER_IMAGE_AT_BASE) {
     return base;
   }
 
-  const scale = Math.sqrt(tokensPerImage / OLLAMA_TOKENS_PER_IMAGE_AT_BASE);
+  const scale = Math.sqrt(tokensPerImage / LOCAL_VL_TOKENS_PER_IMAGE_AT_BASE);
   const dimension = Math.floor(base * scale);
 
   return Math.max(384, Math.min(base, dimension));
@@ -45,7 +57,7 @@ export function getAdaptiveJpegQuality(imageCount: number): number {
 
 /**
  * Converts a raw image buffer into a base64-encoded JPEG string that is
- * ready to be sent to Ollama's vision model.
+ * ready to be sent to the vision model.
  *
  * - Auto-rotates based on EXIF orientation
  * - Resizes so the longest side does not exceed maxDimension

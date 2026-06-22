@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { Job, Worker } from "bullmq";
 import { env } from "../config/env";
-import { prisma } from "../config/db";
+import { connectDb, prisma } from "../config/db";
 import { logger } from "../config/logger";
 import { connection } from "./connection";
 import { QUEUE_NAME } from "./queue";
@@ -100,6 +100,10 @@ worker.on("failed", async (job, err) => {
       })
       .catch((dbErr: unknown) => logger.error({ dbErr }, "Failed to persist job failure"));
   }
+});
+
+void connectDb().then(() => {
+  logger.info("Worker database connection ready");
 });
 
 worker.on("ready", () => {
