@@ -31,6 +31,6 @@
     EXPOSE 4000
     
     # Default command runs the API server.
-    # Override with: command: ["node", "dist/queue/worker.js"] for the worker.
-    CMD ["node", "dist/index.js"]
+    # Override with: command: ["node", "dist/app/worker.js"] for the worker.
+    CMD ["node", "dist/app/server.js"]
     

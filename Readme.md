@@ -1,12 +1,9 @@
-# AI Description Service
+# AI Agent Service
 
-A standalone Node.js/TypeScript microservice that generates two types of
-descriptions for room items (windows, walls, doors, etc.) from one or more
-photos, using a local vision LLM served by **Ollama** (`qwen2.5vl:3b`).
-
-It is designed to sit between your existing **Next.js** frontend / **NestJS**
-backend and Ollama, so neither of those apps needs to know anything about
-image preprocessing or prompt engineering.
+A standalone Node.js/TypeScript microservice that runs multiple AI capabilities
+for property inspection workflows. The first capability is **description-generator**
+(room item descriptions and issue reports from photos), with more capabilities
+planned behind a unified agent-jobs API.
 
 ---
 
@@ -23,14 +20,13 @@ image preprocessing or prompt engineering.
                  │   NestJS     │         │   S3 / Hetzner       │
                  │   Backend    │◄───────►│   Object Storage     │
                  └──────┬───────┘         └─────────┬───────────┘
-                         │ 1. POST /api/v1/jobs              ▲
-                         │    { roomName, itemName,          │ 3. download images
-                         │      imageKeys, descriptionTypes} │    by key
+                         │ 1. POST /api/v1/agent-jobs        ▲
+                         │    { capability, payload }       │ 3. download images    by key
                          │                                    │
                          │ 2. jobId          ┌────────────────┴───────────┐
-                         │                   │   AI Description Service   │
+                         │                   │   AI Agent Service         │
                          │ 4. GET            │  ┌───────────┐ ┌─────────┐ │
-                         │   /api/v1/jobs/:id│  │  Express  │ │ BullMQ  │ │
+                         │   /api/v1/agent-jobs/:id│  │  Express  │ │ BullMQ  │ │
                          └──────────────────►│  │  API      │ │ Worker  │ │
                                               │  └─────┬─────┘ └────┬────┘ │
                                               │        │            │      │
@@ -42,28 +38,30 @@ image preprocessing or prompt engineering.
                                                             │ 5. base64 images + prompt
                                                             ▼
                                                      ┌─────────────┐
-                                                     │   Ollama    │
-                                                     │ qwen2.5vl:3b│
+                                                     │ Vision LLM  │
+                                                     │ (LM Studio / │
+                                                     │ OpenAI /    │
+                                                     │ Gemini /    │
+                                                     │ ATXP)       │
                                                      └─────────────┘
 ```
 
 ### Flow
 
-1. NestJS backend calls `POST /api/v1/jobs` with the known `roomName`,
-   `itemName`, the S3 **keys** of all images for that item, and which
-   description types it wants. The API immediately stores a `PENDING` job
-   in Postgres, enqueues it in Redis/BullMQ, and returns a `jobId`.
+1. NestJS backend calls `POST /api/v1/agent-jobs` with a `capability` slug
+   (e.g. `description-generator`) and capability-specific `payload`. The API
+   stores a `PENDING` job in Postgres, enqueues it in Redis/BullMQ, and returns
+   a `jobId`.
 2. A separate **worker process** picks up the job:
    - Downloads each image from S3 by key.
    - Resizes/normalizes it with `sharp` (keeps payload size and inference
      time reasonable).
    - Sends all images for that item, together with a tailored prompt, to
-     Ollama's `/api/generate` endpoint.
+     the configured vision provider via the Vercel AI SDK.
    - Repeats for each requested description type (`GENERAL`, `ISSUES`).
    - Writes the result back to Postgres (`COMPLETED` or `FAILED`).
-3. NestJS polls `GET /api/v1/jobs/:id` until `status` is `COMPLETED` or
-   `FAILED`, then stores the result (`result.general`, `result.issues`)
-   against the room item in its own database.
+3. NestJS polls `GET /api/v1/agent-jobs/:id` until `status` is `COMPLETED` or
+   `FAILED`, then stores the capability result against the room item.
 
 ### Why this shape?
 
@@ -102,28 +100,31 @@ model to combine information from **all** images of the same item.
 
 All endpoints require header: `x-api-key: <API_KEY>`
 
-### `POST /api/v1/jobs`
+### `POST /api/v1/agent-jobs`
 
-Create a new description job.
+Create a new agent job.
 
 **Request body:**
 ```json
 {
-  "roomName": "Living Room",
-  "itemName": "Window",
-  "imageKeys": ["rooms/123/window/img1.jpg", "rooms/123/window/img2.jpg"],
-  "descriptionTypes": ["GENERAL", "ISSUES"]
+  "capability": "description-generator",
+  "payload": {
+    "roomName": "Living Room",
+    "itemName": "Window",
+    "imageKeys": ["rooms/123/window/img1.jpg", "rooms/123/window/img2.jpg"],
+    "descriptionTypes": ["GENERAL", "ISSUES"]
+  }
 }
 ```
-- `descriptionTypes` is optional, defaults to `["GENERAL", "ISSUES"]`.
+- `descriptionTypes` inside `payload` is optional, defaults to `["GENERAL", "ISSUES"]`.
 - `imageKeys`: 1-10 S3 object keys.
 
 **Response: `202 Accepted`**
 ```json
-{ "jobId": "a1b2c3d4-...", "status": "PENDING" }
+{ "jobId": "a1b2c3d4-...", "capability": "description-generator", "status": "PENDING" }
 ```
 
-### `GET /api/v1/jobs/:id`
+### `GET /api/v1/agent-jobs/:id`
 
 Poll for status/result.
 
@@ -131,18 +132,31 @@ Poll for status/result.
 ```json
 {
   "jobId": "a1b2c3d4-...",
+  "capability": "description-generator",
   "status": "COMPLETED",
-  "roomName": "Living Room",
-  "itemName": "Window",
-  "descriptionTypes": ["GENERAL", "ISSUES"],
+  "payload": {
+    "roomName": "Living Room",
+    "itemName": "Window",
+    "imageKeys": ["rooms/123/window/img1.jpg"],
+    "descriptionTypes": ["GENERAL", "ISSUES"]
+  },
   "result": {
     "general": "The window is a white PVC sliding window...",
     "issues": "There is a visible crack running diagonally across..."
   },
   "error": null,
-  "createdAt": "2026-06-14T10:00:00.000Z",
-  "updatedAt": "2026-06-14T10:00:12.000Z"
+  "created_at": "2026-06-14T10:00:00.000Z",
+  "updated_at": "2026-06-14T10:00:12.000Z"
 }
+```
+
+### `GET /api/v1/capabilities`
+
+List registered capability slugs.
+
+**Response:**
+```json
+{ "capabilities": ["description-generator"] }
 ```
 
 `status` is one of `PENDING`, `PROCESSING`, `COMPLETED`, `FAILED`.
@@ -169,11 +183,8 @@ healthchecks / load balancer probes.
 cp .env.example .env
 # edit .env: set API_KEY, S3_* credentials, etc.
 
-# Start Postgres, Redis, Ollama
-docker compose up -d postgres redis ollama
-
-# Pull the model into the Ollama container (one-time)
-docker compose exec ollama ollama pull qwen2.5vl:3b
+# Start Postgres and Redis
+docker compose up -d postgres redis
 
 # Install deps and generate Prisma client
 npm install
@@ -190,24 +201,25 @@ npm run dev:worker   # background worker
 ### Test it
 
 ```bash
-curl -X POST http://localhost:4000/api/v1/jobs \
+curl -X POST http://localhost:4000/api/v1/agent-jobs \
   -H "Content-Type: application/json" \
   -H "x-api-key: change-me-super-secret-key" \
   -d '{
-    "roomName": "Living Room",
-    "itemName": "Window",
-    "imageKeys": ["test/window1.jpg"],
-    "descriptionTypes": ["GENERAL", "ISSUES"]
+    "capability": "description-generator",
+    "payload": {
+      "roomName": "Living Room",
+      "itemName": "Window",
+      "imageKeys": ["test/window1.jpg"],
+      "descriptionTypes": ["GENERAL", "ISSUES"]
+    }
   }'
 
-# -> { "jobId": "...", "status": "PENDING" }
-
-curl http://localhost:4000/api/v1/jobs/<jobId> \
+curl http://localhost:4000/api/v1/agent-jobs/<jobId> \
   -H "x-api-key: change-me-super-secret-key"
 ```
 
-If you don't have Ollama running locally with the model pulled, the worker
-will fail the job with an error message visible in `GET /api/v1/jobs/:id`.
+If the vision provider is not reachable or misconfigured, the worker will fail
+the job with an error message visible in `GET /api/v1/agent-jobs/:id`.
 
 ---
 
@@ -222,7 +234,7 @@ See `examples/nestjs-integration.example.ts` for a reference
 3. Either:
    - Poll from a background job/cron (`pollUntilDone`), or
    - Have the frontend poll a NestJS endpoint that proxies
-     `GET /api/v1/jobs/:id` (recommended — keeps the AI service's API key
+     `GET /api/v1/agent-jobs/:id` (recommended — keeps the AI service's API key
      off the frontend).
 4. When `status === "COMPLETED"`, persist `result.general` and
    `result.issues` against the room item.
@@ -240,9 +252,8 @@ AI_SERVICE_API_KEY=<same as API_KEY in the AI service .env>
 ### Recommended setup
 
 - **Server**: A CPX31/CPX41 (4-8 vCPU, 8-16GB RAM) is a reasonable starting
-  point for CPU inference with `qwen2.5vl:3b`. If you need faster/parallel
-  inference later, Hetzner's GEX line (GPU servers) work well with Ollama
-  + the NVIDIA Container Toolkit.
+  point if you run **LM Studio** locally for CPU inference. For cloud providers
+  (OpenAI, Gemini, ATXP), worker CPU requirements are lower.
 - **Storage**: Hetzner Object Storage (S3-compatible) for images — set
   `S3_ENDPOINT`, `S3_FORCE_PATH_STYLE=true`, and your access keys.
 - **Networking**: Run this service on the **same Docker host/network** as
@@ -262,10 +273,7 @@ cp .env.prod.example .env
 # edit .env: set strong POSTGRES_PASSWORD, API_KEY, S3 credentials, etc.
 
 docker compose -f docker-compose.prod.yml build
-docker compose -f docker-compose.prod.yml up -d postgres redis ollama
-
-# Pull the model (one-time, persisted in the ollama_data volume)
-docker compose -f docker-compose.prod.yml exec ollama ollama pull qwen2.5vl:3b
+docker compose -f docker-compose.prod.yml up -d postgres redis
 
 # Run Prisma migrations against the prod DB
 docker compose -f docker-compose.prod.yml run --rm ai-service-api npx prisma migrate deploy
@@ -291,10 +299,54 @@ If image volume grows, scale the worker horizontally:
 ```bash
 docker compose -f docker-compose.prod.yml up -d --scale ai-service-worker=3
 ```
-Keep `WORKER_CONCURRENCY=1` per worker if Ollama is CPU-bound on the same
-host, so you don't oversubscribe the CPU. If you move Ollama to a
-dedicated GPU server, you can raise concurrency and/or worker count
-significantly.
+Keep `WORKER_CONCURRENCY=1` per worker if your vision provider is CPU-bound
+on the same host. For cloud API providers, you can raise concurrency and/or
+worker count significantly.
+
+Both `WORKER_RATE_LIMIT_*` and `VISION_RATE_LIMIT_*` are global Redis-backed
+limits shared across all worker replicas — scaling to 3 workers does not
+multiply the allowed jobs or API calls per minute.
+
+### Image preprocessing
+
+Before images are base64-encoded and sent to the vision model, the worker
+downloads and resizes them **in parallel** with `sharp` so the longest side
+does not exceed `MAX_IMAGE_DIMENSION` (default `1024`). Images are
+auto-rotated from EXIF, normalized to JPEG, and only then encoded. This
+keeps payload size and inference context smaller for cloud providers.
+
+When multiple images are sent, **Gemini** and **ATXP** receive all images
+in a single API request with the prompt placed **last** in the content
+array (images first). A multi-image evaluator instruction is appended to
+the prompt so the model synthesizes across every image.
+
+Set `MAX_IMAGE_DIMENSION=1024` in `.env` (already the default). Worker logs
+include `maxDimension` when preparing images so you can confirm the resize
+at runtime.
+
+### Rate limiting (avoiding 429 errors)
+
+Two independent env-controlled limits protect against provider rate limits:
+
+| Variable | What it limits | Default |
+|----------|----------------|---------|
+| `WORKER_RATE_LIMIT_MAX` | Queue jobs **started** per window | `5` (set `0` to disable) |
+| `WORKER_RATE_LIMIT_DURATION_MS` | Job limit window in ms | `60000` |
+| `VISION_RATE_LIMIT_MAX` | Vision API **calls** per window (every `generateDescription`) | `15` (set `0` to disable) |
+| `VISION_RATE_LIMIT_DURATION_MS` | Request limit window in ms | `60000` |
+
+- **Job limiter** (BullMQ Worker `limiter`): caps how many full jobs enter
+  processing per minute. Useful when many jobs are enqueued at once.
+- **Vision request limiter** (Redis): caps every LLM call across all
+  providers and workers. Room overview uses a **single** vision API call
+  (not per-item fan-out), which greatly reduces call volume.
+
+Tune `VISION_RATE_LIMIT_MAX` to your provider RPM (e.g. Gemini free tier
+~15 RPM). Lower `WORKER_RATE_LIMIT_MAX` when room-overview jobs are common.
+
+When `VISION_RATE_LIMIT_MAX > 0`, the global limiter replaces Gemini's
+in-process `GEMINI_REQUEST_GAP_MS` throttle. Gemini 429 retries
+(`GEMINI_MAX_RETRIES`) remain as a safety net.
 
 ### Backups
 
@@ -307,25 +359,21 @@ your regular Hetzner volume/snapshot backup routine.
 ## 7. Project structure
 
 ```
-ai-description-service/
+ai-agent-service/
 ├── prisma/
-│   └── schema.prisma        # DescriptionJob model
+│   └── schema.prisma           # AgentJob model
 ├── src/
-│   ├── config/               # env, db, logger
-│   ├── controllers/           # jobs.controller.ts (create/get)
-│   ├── middleware/            # auth, error handling
-│   ├── queue/                 # BullMQ queue + worker
-│   ├── routes/                 # jobs.routes.ts
-│   ├── services/               # s3, image (sharp), ollama, prompts
-│   ├── validators/             # zod schemas
-│   └── index.ts                # Express app entry point
-├── examples/
-│   └── nestjs-integration.example.ts
-├── docker-compose.yml          # local dev stack
-├── docker-compose.prod.yml     # Hetzner production stack
+│   ├── app/                    # server.ts, worker.ts entrypoints
+│   ├── shared/                 # config, middlewares, types
+│   ├── platform/               # vision LLM, media, queue framework
+│   ├── modules/
+│   │   └── description-generator/
+│   ├── api/                    # agent-jobs HTTP controllers
+│   └── routes/
+├── docker-compose.yml
+├── docker-compose.prod.yml
 ├── Dockerfile
-├── .env.example
-└── .env.prod.example
+└── .env
 ```
 
 ---
@@ -334,10 +382,14 @@ ai-description-service/
 
 - **Prompt tuning**: edit `src/services/prompt.service.ts`. Test changes
   via the `curl` flow above before redeploying.
-- **Larger model**: if `qwen2.5vl:3b` accuracy isn't sufficient, pull a
-  larger variant (e.g. `qwen2.5vl:7b`) and change `OLLAMA_MODEL` — no code
-  changes needed.
-- **Rate limiting**: add `express-rate-limit` to `src/index.ts` if needed.
+- **Provider selection**: set `VISION_PROVIDER` to `lmstudio` (default),
+  `openai`, `gemini`, or `atxp` in `.env`. All providers are wired through
+  the Vercel AI SDK (`generateText`).
+- **Larger model**: for LM Studio, load a larger vision model and update
+  `LMSTUDIO_MODEL` — no code changes needed.
+- **Rate limiting**: `WORKER_RATE_LIMIT_*` and `VISION_RATE_LIMIT_*` in
+  `.env` throttle jobs and vision API calls (see **Rate limiting** under
+  Scaling the worker). Set either `*_MAX=0` to disable.
 - **Observability**: `pino` logs to stdout in JSON in production — pipe
   these into your existing log aggregation (e.g. via Docker logging
   driver).

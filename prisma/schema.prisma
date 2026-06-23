@@ -8,6 +8,10 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+enum AgentCapability {
+  DESCRIPTION_GENERATOR
+}
+
 enum JobStatus {
   PENDING
   PROCESSING
@@ -15,38 +19,30 @@ enum JobStatus {
   FAILED
 }
 
-enum DescriptionType {
-  GENERAL
-  ISSUES
-}
+model AgentJob {
+  id         String          @id @default(uuid())
+  capability AgentCapability
+  payload    Json
+  result     Json?
+  status     JobStatus       @default(PENDING)
+  error      String?
 
-// A single request to describe a room item, possibly using multiple images.
-// "descriptionTypes" controls which AI outputs are generated:
-//   GENERAL -> a plain description of the item (type, material, color, condition)
-//   ISSUES  -> a defect/issue report (cracks, peeling paint, broken parts, etc.)
-model DescriptionJob {
-  id               String    @id @default(uuid())
+  tenantId   String?         @map("tenant_id")
+  schemaName String?         @map("schema_name")
+  userId     String?         @map("user_id")
+  userName   String?         @map("user_name")
+  imageCount Int?            @map("image_count")
+  images     Json?
 
-  // Context supplied by the backend - known in advance
-  roomName         String
-  itemName         String
+  reviewSubmittedAt DateTime? @map("review_submitted_at")
+  reviewNote        String?   @map("review_note")
+  reviewLiked       Boolean?  @map("review_liked")
 
-  // S3 object keys for the uploaded images related to this room item
-  imageKeys        String[]
+  createdAt  DateTime        @default(now()) @map("created_at")
+  updatedAt  DateTime        @updatedAt @map("updated_at")
 
-  // Which description(s) to generate for this job
-  descriptionTypes DescriptionType[]
-
-  status           JobStatus @default(PENDING)
-
-  // { "general": "...", "issues": "..." }
-  result           Json?
-
-  error            String?
-
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
-
-  @@index([status])
-  @@index([createdAt])
+  @@index([capability, status])
+  @@index([createdAt], map: "AgentJob_created_at_idx")
+  @@index([tenantId])
+  @@index([userId])
 }

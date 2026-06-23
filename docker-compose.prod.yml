@@ -3,7 +3,7 @@ version: "3.9"
 # Production stack for a Hetzner VPS.
 #
 # Differences vs. local dev:
-#   - Postgres/Redis/Ollama ports are NOT published to the host - only
+#   - Postgres/Redis ports are NOT published to the host - only
 #     reachable from other containers on the internal "ai_internal" network.
 #   - ai-service-api is the ONLY port exposed, and only on 127.0.0.1 so it
 #     sits behind nginx/Caddy for TLS termination (or behind your VPN /
@@ -11,9 +11,8 @@ version: "3.9"
 #   - Use a managed Postgres or an external object storage for production
 #     if you prefer - this file assumes self-hosted Postgres for simplicity.
 #
-# GPU note: if you use a Hetzner GPU server (GEX line), uncomment the
-# "deploy.resources.reservations.devices" block under "ollama" and install
-# the NVIDIA Container Toolkit on the host.
+# Vision inference uses an external provider configured in .env
+# (LM Studio, OpenAI, Gemini, or ATXP).
 
 services:
   postgres:
@@ -46,24 +45,9 @@ services:
       timeout: 5s
       retries: 5
 
-  ollama:
-    image: ollama/ollama:latest
-    restart: always
-    volumes:
-      - ollama_data:/root/.ollama
-    networks:
-      - ai_internal
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
-
   ai-service-api:
     build: .
-    command: ["node", "dist/index.js"]
+    command: ["node", "dist/app/server.js"]
     restart: always
     env_file: .env
     depends_on:
@@ -78,7 +62,7 @@ services:
 
   ai-service-worker:
     build: .
-    command: ["node", "dist/queue/worker.js"]
+    command: ["node", "dist/app/worker.js"]
     restart: always
     env_file: .env
     depends_on:
@@ -96,4 +80,3 @@ networks:
 volumes:
   pg_data:
   redis_data:
-  ollama_data:

@@ -3,10 +3,10 @@ version: "3.9"
 # Local development stack:
 #   - postgres: stores DescriptionJob records
 #   - redis: BullMQ queue backend
-#   - ollama: serves qwen2.5vl:3b for vision inference
-#   - ai-service-api: HTTP API (POST/GET /api/v1/jobs)
+#   - ai-service-api: HTTP API (POST/GET /api/v1/agent-jobs)
 #   - ai-service-worker: background worker that does the actual image -> description work
 #
+# Vision inference uses an external provider configured in .env (default: LM Studio).
 # Note: image storage (S3 / Hetzner Object Storage) is external - configure
 # the S3_* variables in .env to point at your bucket.
 
@@ -39,19 +39,9 @@ services:
       timeout: 5s
       retries: 5
 
-  ollama:
-    image: ollama/ollama:latest
-    restart: unless-stopped
-    volumes:
-      - ollama_data:/root/.ollama
-    ports:
-      - "11434:11434"
-    # To pull the model the first time, run:
-    #   docker compose exec ollama ollama pull qwen2.5vl:3b
-
   ai-service-api:
     build: .
-    command: ["node", "dist/index.js"]
+    command: ["node", "dist/app/server.js"]
     restart: unless-stopped
     env_file: .env
     depends_on:
@@ -64,7 +54,7 @@ services:
 
   ai-service-worker:
     build: .
-    command: ["node", "dist/queue/worker.js"]
+    command: ["node", "dist/app/worker.js"]
     restart: unless-stopped
     env_file: .env
     depends_on:
@@ -75,4 +65,3 @@ services:
 
 volumes:
   pg_data:
-  ollama_data:
