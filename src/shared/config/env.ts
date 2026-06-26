@@ -21,7 +21,7 @@ const envSchema = z
     REDIS_URL: z.string().min(1, "REDIS_URL must be set"),
 
     VISION_PROVIDER: z
-      .enum(["lmstudio", "openai", "gemini", "atxp"])
+      .enum(["lmstudio", "openai", "gemini", "atxp", "openrouter"])
       .default("lmstudio"),
 
     LMSTUDIO_BASE_URL: z.string().default("http://192.168.100.18:1234"),
@@ -49,6 +49,12 @@ const envSchema = z
     ATXP_MODEL: z.string().default("gemini-2.5-flash"),
     ATXP_TIMEOUT_MS: z.coerce.number().default(120000),
 
+    OPENROUTER_API_KEY: z.string().optional(),
+    OPENROUTER_MODEL: z.string().default("google/gemini-2.5-flash"),
+    OPENROUTER_TIMEOUT_MS: z.coerce.number().default(120000),
+    OPENROUTER_HTTP_REFERER: z.string().optional(),
+    OPENROUTER_APP_TITLE: z.string().default("Wooma"),
+
     S3_ENDPOINT: z.string().min(1, "S3_ENDPOINT must be set"),
     S3_REGION: z.string().default("us-east-1"),
     S3_BUCKET: z.string().min(1, "S3_BUCKET must be set"),
@@ -58,6 +64,11 @@ const envSchema = z
 
     MAX_IMAGE_DIMENSION: z.coerce.number().default(1024),
     WORKER_CONCURRENCY: z.coerce.number().default(1),
+    /** BullMQ job timeout in ms (0 = disabled) */
+    WORKER_JOB_TIMEOUT_MS: z.coerce.number().default(180000),
+    /** wooma-backend webhook for job status push (optional) */
+    WOOMA_BACKEND_WEBHOOK_URL: z.string().optional(),
+    WOOMA_BACKEND_WEBHOOK_SECRET: z.string().optional(),
     /** Max queue jobs started per window (0 = disabled) */
     WORKER_RATE_LIMIT_MAX: z.coerce.number().default(0),
     WORKER_RATE_LIMIT_DURATION_MS: z.coerce.number().default(60000),
@@ -100,6 +111,15 @@ const envSchema = z
         message:
           "ATXP_CONNECTION or AXTP_TOKEN must be set when VISION_PROVIDER=atxp",
         path: ["ATXP_CONNECTION"],
+      });
+    }
+
+    if (data.VISION_PROVIDER === "openrouter" && !data.OPENROUTER_API_KEY) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "OPENROUTER_API_KEY must be set when VISION_PROVIDER=openrouter",
+        path: ["OPENROUTER_API_KEY"],
       });
     }
   });

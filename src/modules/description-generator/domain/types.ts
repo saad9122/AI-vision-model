@@ -7,6 +7,7 @@ export interface DescriptionGeneratorPayload {
   itemName: string;
   imageKeys: string[];
   descriptionTypes: DescriptionType[];
+  model?: string;
 }
 
 export interface RatingSuggestion {

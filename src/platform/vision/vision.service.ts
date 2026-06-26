@@ -9,8 +9,16 @@ import { env } from "../../shared/config/env";
 import { logger } from "../../shared/config/logger";
 import { generateWithGeminiRetry } from "./gemini-retry";
 import { acquireVisionRateLimitSlot } from "./vision-rate-limit.service";
-import { getVisionModel, getVisionTimeoutMs } from "./vision-model.factory";
+import {
+  getResolvedVisionModelLabel,
+  getVisionModel,
+  getVisionTimeoutMs,
+} from "./vision-model.factory";
 import { buildVisionMessages } from "./vision-messages";
+
+export interface VisionRequestOptions {
+  model?: string;
+}
 
 function getVisionErrorMessage(error: unknown): string | undefined {
   if (APICallError.isInstance(error)) {
@@ -62,11 +70,12 @@ function formatVisionError(error: unknown): Error {
 
 export async function generateDescription(
   prompt: string,
-  images: string[]
+  images: string[],
+  options?: VisionRequestOptions
 ): Promise<string> {
   await acquireVisionRateLimitSlot();
 
-  const model = getVisionModel();
+  const model = getVisionModel(options?.model);
   const messages = buildVisionMessages(prompt, images);
   const abortSignal = AbortSignal.timeout(getVisionTimeoutMs());
 
@@ -95,7 +104,11 @@ export async function generateDescription(
     }
 
     logger.error(
-      { error, provider: env.VISION_PROVIDER },
+      {
+        error,
+        provider: env.VISION_PROVIDER,
+        model: getResolvedVisionModelLabel(options?.model),
+      },
       "Vision model request failed"
     );
 
@@ -119,10 +132,11 @@ function parseRatingsJson(text: string): ItemRatingsResult | null {
 
 export async function generateStructuredRatings(
   prompt: string,
-  images: string[]
+  images: string[],
+  options?: VisionRequestOptions
 ): Promise<ItemRatingsResult | null> {
   try {
-    const text = await generateDescription(prompt, images);
+    const text = await generateDescription(prompt, images, options);
     return parseRatingsJson(text);
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("Gemini rate limit exceeded")) {
@@ -154,10 +168,11 @@ function parseDetectedItemsJson(text: string): DetectedItemsResult | null {
 
 export async function generateDetectedItems(
   prompt: string,
-  images: string[]
+  images: string[],
+  options?: VisionRequestOptions
 ): Promise<string[] | null> {
   try {
-    const text = await generateDescription(prompt, images);
+    const text = await generateDescription(prompt, images, options);
     const parsed = parseDetectedItemsJson(text);
     if (!parsed) return null;
 
@@ -180,17 +195,6 @@ export async function generateDetectedItems(
   }
 }
 
-export function getActiveVisionProviderLabel(): string {
-  switch (env.VISION_PROVIDER) {
-    case "lmstudio":
-      return `lmstudio (${env.LMSTUDIO_MODEL})`;
-    case "openai":
-      return `openai (${env.OPENAI_MODEL})`;
-    case "gemini":
-      return `gemini (${env.GEMINI_MODEL})`;
-    case "atxp":
-      return `atxp (${env.ATXP_MODEL})`;
-    default:
-      return `lmstudio (${env.LMSTUDIO_MODEL})`;
-  }
+export function getActiveVisionProviderLabel(modelOverride?: string): string {
+  return getResolvedVisionModelLabel(modelOverride);
 }

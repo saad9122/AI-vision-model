@@ -8,6 +8,7 @@ import { getActiveVisionProviderLabel } from "../vision/vision.service";
 import { connection } from "./connection";
 import { QUEUE_NAME } from "./agent-jobs.queue";
 import { getCapabilityHandler } from "./capability-registry";
+import { notifyJobStatusChange } from "./job-webhook.service";
 
 async function processAgentJob(job: Job<AgentJobQueuePayload>) {
   const { jobId } = job.data;
@@ -17,29 +18,38 @@ async function processAgentJob(job: Job<AgentJobQueuePayload>) {
     throw new Error(`AgentJob ${jobId} not found in database`);
   }
 
-  await prisma.agentJob.update({
+  const processing = await prisma.agentJob.update({
     where: { id: jobId },
     data: { status: "PROCESSING" },
   });
+  await notifyJobStatusChange(processing);
 
   const handler = getCapabilityHandler(record.capability);
   const payload = handler.validatePayload(record.payload);
-  const result = await handler.process(jobId, payload);
 
-  await prisma.agentJob.update({
-    where: { id: jobId },
-    data: {
-      status: "COMPLETED",
-      result: result as Prisma.InputJsonValue,
-      error: null,
-    },
-  });
+  try {
+    const result = await handler.process(jobId, payload);
+
+    const completed = await prisma.agentJob.update({
+      where: { id: jobId },
+      data: {
+        status: "COMPLETED",
+        result: result as Prisma.InputJsonValue,
+        error: null,
+      },
+    });
+    await notifyJobStatusChange(completed);
+  } catch (err) {
+    throw err;
+  }
 }
 
 export function createAgentWorker(): Worker<AgentJobQueuePayload> {
   const worker = new Worker<AgentJobQueuePayload>(QUEUE_NAME, processAgentJob, {
     connection,
     concurrency: env.WORKER_CONCURRENCY,
+    stalledInterval: 30_000,
+    maxStalledCount: 2,
     ...(env.WORKER_RATE_LIMIT_MAX > 0 && {
       limiter: {
         max: env.WORKER_RATE_LIMIT_MAX,
@@ -62,10 +72,15 @@ export function createAgentWorker(): Worker<AgentJobQueuePayload> {
           where: { id: job.data.jobId },
           data: { status: "FAILED", error: err.message ?? "Unknown error" },
         })
+        .then((updated) => notifyJobStatusChange(updated))
         .catch((dbErr: unknown) =>
           logger.error({ dbErr }, "Failed to persist agent job failure")
         );
     }
+  });
+
+  worker.on("error", (err) => {
+    logger.error({ err }, "Agent worker error");
   });
 
   worker.on("ready", () => {
@@ -73,6 +88,7 @@ export function createAgentWorker(): Worker<AgentJobQueuePayload> {
       {
         visionProvider: getActiveVisionProviderLabel(),
         concurrency: env.WORKER_CONCURRENCY,
+        jobTimeoutMs: env.WORKER_JOB_TIMEOUT_MS,
         ...(env.WORKER_RATE_LIMIT_MAX > 0 && {
           workerRateLimit: {
             max: env.WORKER_RATE_LIMIT_MAX,

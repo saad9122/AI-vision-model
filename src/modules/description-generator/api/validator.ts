@@ -1,7 +1,11 @@
 import { z } from "zod";
 import { normalizeS3Key } from "../../../platform/media/s3.service";
+import { isAllowedVisionModel } from "../../../platform/vision/vision-models.constants";
 
 export const descriptionGeneratorPayloadSchema = z.object({
+  reportId: z.string().uuid("reportId must be a valid UUID"),
+  roomId: z.string().uuid("roomId must be a valid UUID").optional(),
+  itemId: z.string().uuid("itemId must be a valid UUID").optional(),
   roomName: z.string().trim().min(1, "roomName is required"),
   itemName: z.string().trim().min(1, "itemName is required"),
   imageKeys: z
@@ -14,8 +18,15 @@ export const descriptionGeneratorPayloadSchema = z.object({
     .min(1)
     .max(2)
     .default(["GENERAL", "ISSUES"]),
+  model: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .refine((value) => value === undefined || isAllowedVisionModel(value), {
+      message: "model must be one of the supported vision models",
+    }),
 });
-
 export type DescriptionGeneratorPayloadInput = z.infer<
   typeof descriptionGeneratorPayloadSchema
 >;

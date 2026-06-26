@@ -56,17 +56,22 @@ async function processDescriptionGenerator(
 
   const result: DescriptionGeneratorResult = {};
   const prompts = buildPrompts(payload.roomName, payload.itemName, images.length);
+  const visionOptions = payload.model ? { model: payload.model } : undefined;
 
   if (payload.descriptionTypes.includes("GENERAL")) {
     const generalPromise =
       itemScope === "ROOM_OVERVIEW"
-        ? generateRoomOverviewGeneral(payload.roomName, images)
-        : generateDescription(prompts.general, images);
+        ? generateRoomOverviewGeneral(payload.roomName, images, visionOptions)
+        : generateDescription(prompts.general, images, visionOptions);
 
-    const ratingsPromise = generateStructuredRatings(prompts.ratings, images);
+    const ratingsPromise = generateStructuredRatings(
+      prompts.ratings,
+      images,
+      visionOptions
+    );
     const detectedItemsPromise =
       itemScope === "ROOM_OVERVIEW" && prompts.detectedItems
-        ? generateDetectedItems(prompts.detectedItems, images)
+        ? generateDetectedItems(prompts.detectedItems, images, visionOptions)
         : Promise.resolve(null);
 
     const [general, ratings, detectedItems] = await Promise.all([
@@ -88,7 +93,11 @@ async function processDescriptionGenerator(
   }
 
   if (payload.descriptionTypes.includes("ISSUES")) {
-    result.issues = await generateDescription(prompts.issues, images);
+    result.issues = await generateDescription(
+      prompts.issues,
+      images,
+      visionOptions
+    );
   }
 
   logger.info({ jobId }, "Description-generator job completed");

@@ -5,6 +5,7 @@ import {
   submitAgentJobReview,
 } from "../api/agent-jobs.controller";
 import { listCapabilities } from "../api/capabilities.controller";
+import { getVisionConfig } from "../api/vision-config.controller";
 
 export const agentJobsRouter = Router();
 
@@ -15,3 +16,7 @@ agentJobsRouter.get("/:id", getAgentJob);
 export const capabilitiesRouter = Router();
 
 capabilitiesRouter.get("/", listCapabilities);
+
+export const visionRouter = Router();
+
+visionRouter.get("/config", getVisionConfig);

@@ -42,6 +42,7 @@ planned behind a unified agent-jobs API.
                                                      │ (LM Studio / │
                                                      │ OpenAI /    │
                                                      │ Gemini /    │
+                                                     │ OpenRouter /│
                                                      │ ATXP)       │
                                                      └─────────────┘
 ```
@@ -253,7 +254,7 @@ AI_SERVICE_API_KEY=<same as API_KEY in the AI service .env>
 
 - **Server**: A CPX31/CPX41 (4-8 vCPU, 8-16GB RAM) is a reasonable starting
   point if you run **LM Studio** locally for CPU inference. For cloud providers
-  (OpenAI, Gemini, ATXP), worker CPU requirements are lower.
+  (OpenAI, Gemini, OpenRouter, ATXP), worker CPU requirements are lower.
 - **Storage**: Hetzner Object Storage (S3-compatible) for images — set
   `S3_ENDPOINT`, `S3_FORCE_PATH_STYLE=true`, and your access keys.
 - **Networking**: Run this service on the **same Docker host/network** as
@@ -315,7 +316,7 @@ does not exceed `MAX_IMAGE_DIMENSION` (default `1024`). Images are
 auto-rotated from EXIF, normalized to JPEG, and only then encoded. This
 keeps payload size and inference context smaller for cloud providers.
 
-When multiple images are sent, **Gemini** and **ATXP** receive all images
+When multiple images are sent, **Gemini**, **ATXP**, and **OpenRouter** receive all images
 in a single API request with the prompt placed **last** in the content
 array (images first). A multi-image evaluator instruction is appended to
 the prompt so the model synthesizes across every image.
@@ -383,8 +384,13 @@ ai-agent-service/
 - **Prompt tuning**: edit `src/services/prompt.service.ts`. Test changes
   via the `curl` flow above before redeploying.
 - **Provider selection**: set `VISION_PROVIDER` to `lmstudio` (default),
-  `openai`, `gemini`, or `atxp` in `.env`. All providers are wired through
+  `openai`, `gemini`, `atxp`, or `openrouter` in `.env`. All providers are wired through
   the Vercel AI SDK (`generateText`).
+- **OpenRouter** (recommended for production): set `VISION_PROVIDER=openrouter` and
+  configure the variables below. ATXP remains available via `VISION_PROVIDER=atxp`.
+- **Per-job model override**: the frontend can pass an optional `model` field in the
+  `description-generator` payload. If omitted, the provider default from env is used.
+  Supported models are listed by `GET /api/v1/vision/config`.
 - **Larger model**: for LM Studio, load a larger vision model and update
   `LMSTUDIO_MODEL` — no code changes needed.
 - **Rate limiting**: `WORKER_RATE_LIMIT_*` and `VISION_RATE_LIMIT_*` in
@@ -393,3 +399,29 @@ ai-agent-service/
 - **Observability**: `pino` logs to stdout in JSON in production — pipe
   these into your existing log aggregation (e.g. via Docker logging
   driver).
+
+### OpenRouter environment variables
+
+| Variable | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `VISION_PROVIDER` | — | `lmstudio` | Set to `openrouter` |
+| `OPENROUTER_API_KEY` | when `openrouter` | — | API key from [openrouter.ai/keys](https://openrouter.ai/keys) |
+| `OPENROUTER_MODEL` | — | `google/gemini-2.5-flash` | Default model when the frontend omits `model` |
+| `OPENROUTER_TIMEOUT_MS` | — | `120000` | Per-request timeout in ms |
+| `OPENROUTER_HTTP_REFERER` | — | — | Optional `HTTP-Referer` header for OpenRouter app attribution |
+| `OPENROUTER_APP_TITLE` | — | `Wooma` | Optional `X-OpenRouter-Title` header |
+
+Example `.env` block:
+
+```env
+VISION_PROVIDER=openrouter
+OPENROUTER_API_KEY=sk-or-v1-...
+OPENROUTER_MODEL=google/gemini-2.5-flash
+```
+
+Selectable models (frontend dropdown and payload allowlist):
+
+- `google/gemini-2.5-flash`
+- `google/gemini-2.5-flash-lite`
+- `openai/gpt-4o`
+- `anthropic/claude-sonnet-4`

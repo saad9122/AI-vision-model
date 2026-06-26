@@ -1,10 +1,14 @@
 import { logger } from "../../../shared/config/logger";
-import { generateDescription } from "../../../platform/vision/vision.service";
+import {
+  generateDescription,
+  type VisionRequestOptions,
+} from "../../../platform/vision/vision.service";
 import { buildRoomOverviewGeneralPrompt } from "../domain/prompts.service";
 
 export async function generateRoomOverviewGeneral(
   roomName: string,
-  images: string[]
+  images: string[],
+  options?: VisionRequestOptions
 ): Promise<string> {
   logger.info(
     { roomName, imageCount: images.length },
@@ -13,6 +17,7 @@ export async function generateRoomOverviewGeneral(
 
   return generateDescription(
     buildRoomOverviewGeneralPrompt(roomName, images.length),
-    images
+    images,
+    options
   );
 }

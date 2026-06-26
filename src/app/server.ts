@@ -5,7 +5,7 @@ import { env } from "../shared/config/env";
 import { logger } from "../shared/config/logger";
 import { apiKeyAuth } from "../shared/middlewares/auth.middleware";
 import { errorHandler } from "../shared/middlewares/error.middleware";
-import { agentJobsRouter, capabilitiesRouter } from "../routes";
+import { agentJobsRouter, capabilitiesRouter, visionRouter } from "../routes";
 import "./register-capabilities";
 
 const app = express();
@@ -20,6 +20,7 @@ app.get("/health", (_req, res) => {
 const protectedRouter = express.Router();
 protectedRouter.use("/agent-jobs", agentJobsRouter);
 protectedRouter.use("/capabilities", capabilitiesRouter);
+protectedRouter.use("/vision", visionRouter);
 
 if (env.API_KEY_AUTH_ENABLED) {
   app.use("/api/v1", apiKeyAuth, protectedRouter);
